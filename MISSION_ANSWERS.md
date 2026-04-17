@@ -133,4 +133,4 @@ All security tests passed for this mode!
 - **Lệnh thực hiện**: `docker compose up --scale agent=3`
 - **Kết quả kiểm chứng**:
     - Khi debug response, giá trị `served_by` thay đổi giữa các ID khác nhau (ví dụ: `instance-a`, `instance-b`), chứng tỏ Load Balancer đang phân phối traffic đều.
-    -Dù request bị nhảy giữa các instance, lịch sử chat vẫn được duy trì liên tục và chính xác.
+    - Dù request bị nhảy giữa các instance, lịch sử chat vẫn được duy trì liên tục và chính xác.

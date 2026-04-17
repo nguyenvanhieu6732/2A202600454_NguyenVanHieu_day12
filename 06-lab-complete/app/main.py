@@ -31,8 +31,9 @@ from app.auth import verify_api_key
 from app.rate_limiter import check_rate_limit
 from app.cost_guard import check_and_record_cost
 
-# Mock LLM
-from utils.mock_llm import ask as llm_ask
+# OpenAI API
+from openai import AsyncOpenAI
+import httpx
 
 # ─────────────────────────────────────────────────────────
 # Logging — JSON structured
@@ -45,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 START_TIME = time.time()
 _is_ready = False
+
+# Init OpenAI Client
+openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
 # ─────────────────────────────────────────────────────────
 # Conversation History Helpers (Redis-backed)
@@ -193,16 +197,25 @@ async def ask_agent(
     history.append({"role": "user", "content": body.question})
 
     # 4. Agent logic (LLM Call)
-    # Note: Mock LLM doesn't use history yet, but we're architected for it
-    answer = llm_ask(body.question)
+    if openai_client is None:
+        raise HTTPException(status_code=500, detail="OpenAI API Key is not configured on the server")
+        
+    try:
+        response = await openai_client.chat.completions.create(
+            model=settings.llm_model,
+            messages=history
+        )
+        answer = response.choices[0].message.content
+        # True cost checking via usage
+        if response.usage:
+             check_and_record_cost(0, response.usage.completion_tokens) # we'll replace the existing check later
+    except Exception as e:
+        logger.error(f"OpenAI API Error: {str(e)}")
+        raise HTTPException(status_code=502, detail="Failed to communicate with OpenAI API")
     
     # Add assistant response to history
     history.append({"role": "assistant", "content": answer})
     save_history(session_id, history)
-
-    # 5. Record cost (post-call)
-    output_tokens = len(answer.split()) * 2
-    check_and_record_cost(0, output_tokens)
 
     return AskResponse(
         session_id=session_id,
