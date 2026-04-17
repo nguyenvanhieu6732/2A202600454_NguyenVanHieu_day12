@@ -1,8 +1,6 @@
 # ============================================================
 # render.yaml — Infrastructure as Code cho Render
-#
 # Docs: https://render.com/docs/blueprint-spec
-# Commit file này vào git → Render tự sync infrastructure.
 # ============================================================
 
 services:
@@ -15,8 +13,8 @@ services:
     region: singapore
     plan: free
 
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd 03-cloud-deployment/railway && pip install -r requirements.txt
+    startCommand: cd 03-cloud-deployment/railway && uvicorn app:app --host 0.0.0.0 --port $PORT
 
     healthCheckPath: /health
     autoDeploy: true
@@ -28,14 +26,15 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.0
 
-      # Secrets — set qua Render Dashboard
+      # Set manually in Render Dashboard
       - key: OPENAI_API_KEY
         sync: false
 
+      # Auto-generated secret
       - key: AGENT_API_KEY
         generateValue: true
 
-    # Nếu cần mount disk:
+    # Optional persistent disk
     # disk:
     #   name: agent-data
     #   mountPath: /data
