@@ -91,10 +91,15 @@ def root():
 
 
 @app.post("/ask")
-async def ask_agent(question: str):
+async def ask_agent(question: str, delay: int = 0):
     if not _is_ready:
         raise HTTPException(503, "Agent not ready")
-    return {"answer": ask(question)}
+    
+    if delay > 0:
+        logger.info(f"Simulating long task: {delay}s...")
+        time.sleep(delay)
+        
+    return {"question": question, "answer": ask(question)}
 
 
 # ──────────────────────────────────────────────────────────

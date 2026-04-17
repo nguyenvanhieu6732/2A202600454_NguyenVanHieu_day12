@@ -44,14 +44,14 @@
 - **Sơ đồ kiến trúc**:
 
 ```mermaid
-graph LR
-    Client((Client)) -->|Port 80| Nginx[Nginx LB]
-    Nginx -->|Upstream| Agent1[Agent Instance 1]
-    Nginx -->|Upstream| Agent2[Agent Instance 2]
-    Nginx -->|Upstream| Agent3[Agent Instance 3]
-    Agent1 -->|Shared State| Redis[(Redis)]
-    Agent2 -->|Shared State| Redis
-    Agent3 -->|Shared State| Redis
+graph TD
+    Client[Người dùng] -->|HTTP Port 80| Nginx[Nginx Load Balancer]
+    Nginx -->|Proxy Port 8000| Agent1[Agent Instance 1]
+    Nginx -->|Proxy Port 8000| Agent2[Agent Instance 2]
+    Agent1 -->|Cache/Rate Limit Port 6379| Redis[(Redis)]
+    Agent2 -->|Cache/Rate Limit Port 6379| Redis
+    Agent1 -->|Vector Search Port 6333| Qdrant[(Qdrant DB)]
+    Agent2 -->|Vector Search Port 6333| Qdrant
 ```
 
 - **Các services**: `nginx` (Load Balancer), `agent` (AI Service), `redis` (Shared State).
@@ -66,13 +66,71 @@ graph LR
 - **URL**: https://zealous-grace-production-0630.up.railway.app
 - **Screenshot**: ![alt text](railway.png)
 
-### Exercise 3.2: Render vs Railway Comparison
-| Feature | Railway (`railway.toml`) | Render (`render.yaml`) | Ghi chú |
-|---------|---------------------------|-------------------------|---------|
-| **Builder** | Thường dùng Nixpacks (tự detect) | Chỉ định rõ runtime (python) | Railway linh hoạt hơn, Render chi tiết hơn. |
-| **Command** | `startCommand` đơn giản | `buildCommand` & `startCommand` | Render tách biệt rõ giai đoạn build và run. |
-| **Env Vars** | Set qua dashboard hoặc CLI | Định nghĩa trực tiếp trong file yaml | Render cho phép "Infrastructure as Code" tốt hơn. |
-| **Add-ons** | Set riêng trong dashboard | Định nghĩa kèm trong schema (Redis) | Render cho phép tạo cả cụm (stack) qua một file duy nhất. |
-| **Secrets** | Inline hoặc CLI | Hỗ trợ `sync: false` & `generate` | Render bảo mật hơn trong việc quản lý template secrets. |
+### Exercise 3.2: Render deployment
+- **URL**: https://ai-agent-ihdp.onrender.com/
+- **Screenshot**: ![alt text](render.png)
 
-**Nhận xét**: Railway tập trung vào sự đơn giản, nhanh gọn cho dev. Render tập trung vào khả năng quản lý hạ tầng đồng nhất (Blueprint) và hỗ trợ stack phức tạp tốt hơn.
+## Part 4: API Security
+
+### Exercise 4.1-4.3: Test Results
+Kết quả chạy script `test_security.py` cho cả hai phiên bản:
+
+**1. Develop Mode (API Key Authentication):**
+```text
+Detecting API mode...
+Mode detected: DEVELOP (API Key Authentication)
+
+[Test 1] Testing API Key Authentication...
+OK: Rejected access without API Key
+OK: Rejected invalid API Key
+OK: Accepted valid API Key
+
+All security tests passed for this mode!
+```
+
+**2. Production Mode (JWT + Full Security):**
+```text
+Detecting API mode...
+Mode detected: PRODUCTION (JWT Authentication)
+
+[Test 1] Testing JWT Authentication...
+OK: Rejected access without token
+OK: Rejected invalid token
+OK: Accepted valid token
+
+[Test 2] Testing Rate Limiting (10 req/min)...
+OK: Rate limited successfully at request 11
+
+[Test 3] Checking Usage Stats...
+OK: Usage stats: {'user_id': 'student', 'date': '2026-04-17', 'requests': 10, 'input_tokens': 38, 'output_tokens': 288, 'cost_usd': 0.000178, 'budget_usd': 1.0, 'budget_remaining_usd': 0.999822, 'budget_used_pct': 0.0}
+
+All security tests passed for this mode!
+```
+
+### Exercise 4.4: Cost Guard Implementation
+**Cách tiếp cận**:
+1. **Sử dụng Singleton Pattern**: Đối tượng `cost_guard` được khởi tạo một lần và dùng chung trong toàn bộ app.
+2. **Tính toán chi phí (Cost Calculation)**: Giá được tính dựa trên số lượng Input/Output Tokens (ví dụ: $0.15/1M input).
+3. **Kiểm tra trước (Pre-check)**: Luôn gọi `check_budget()` TRƯỚC khi gọi LLM API. Nếu vượt quá giới hạn hàng ngày ($1/user), hệ thống sẽ raise lỗi `402 Payment Required`.
+4. **Ghi nhận sau (Post-record)**: Sau khi LLM trả về, gọi `record_usage()` để cập nhật số token và chi phí thực tế vào bộ nhớ (hoặc Redis trong thực tế).
+5. **Cảnh báo (Warning)**: Tự động log log warning khi user đã sử dụng vượt quá 80% budget định mức.
+
+## Part 5: Scaling & Reliability
+
+### Exercise 5.1: Health & Readiness checks
+- **Health check (`/health`)**: Kiểm tra trạng thái "sống" của ứng dụng (Liveness). Nếu server phản hồi 200, platform biết app đang chạy. Nếu Redis down, trả về `degraded`.
+- **Readiness check (`/ready`)**: Kiểm tra xem app đã sẵn sàng nhận traffic chưa. Nếu Redis (dependency quan trọng) bị ngắt kết nối, endpoint trả về `503 Service Unavailable` để Nginx ngừng gửi request đến instance này.
+
+### Exercise 5.2: Graceful Shutdown
+- **Cơ chế**: Sử dụng `lifespan` context manager trong FastAPI kết hợp với việc bắt các tín hiệu hệ thống (`SIGTERM`).
+- **Lợi ích**: Giúp app hoàn thành các request đang xử lý dở dang trước khi tắt hẳn, tránh tình trạng client nhận lỗi đột ngột hoặc mất dữ liệu session đang lưu tạm.
+
+### Exercise 5.3: Stateless Design
+- **Cách thực hiện**: Chuyển toàn bộ dữ liệu phiên làm việc (`conversation_history`) từ bộ nhớ RAM của app vào **Redis**.
+- **Tầm quan trọng**: Giúp hệ thống có khả năng scale ngang (horizontal scale). Khi có nhiều instance Agent chạy cùng lúc đằng sau Load Balancer, người dùng có thể gửi request đến bất kỳ instance nào mà vẫn giữ được mạch hội thoại nhờ dữ liệu session dùng chung trong Redis.
+
+### Exercise 5.4-5.5: Load Balancing & Stateless Test
+- **Lệnh thực hiện**: `docker compose up --scale agent=3`
+- **Kết quả kiểm chứng**:
+    - Khi debug response, giá trị `served_by` thay đổi giữa các ID khác nhau (ví dụ: `instance-a`, `instance-b`), chứng tỏ Load Balancer đang phân phối traffic đều.
+    -Dù request bị nhảy giữa các instance, lịch sử chat vẫn được duy trì liên tục và chính xác.
